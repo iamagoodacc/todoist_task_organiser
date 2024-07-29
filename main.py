@@ -58,7 +58,6 @@ for task in tasks:
             placed = True
             break
 
-# Display the Scheduled Tasks
 for day, data in week.items():
     print(f"{day}:")
     for task in data["tasks"]:
