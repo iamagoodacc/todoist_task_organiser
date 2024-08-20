@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from datetime import datetime, timedelta, date, time
+from datetime import datetime, timedelta, date, time, timezone
 from todoist_api_python.api import TodoistAPI
 
 load_dotenv()
@@ -12,11 +12,12 @@ DEFAULT_TASK_DURATION = 60  # default task duration in minutes
 API = TodoistAPI(os.getenv('API_KEY'))
 
 class Task:
-    def __init__(self, name, priority, duration, due_date=None):
+    def __init__(self, name, priority, duration, due_date=None, organised=False):
         self.name = name
         self.priority = priority
         self.duration = duration  # in minutes
         self.due_date = due_date  # datetime object or None
+        self.organised = organised
 
 class TaskScheduler:
     def __init__(self, workday_minutes, breathing_room, workday_start_time):
@@ -33,7 +34,8 @@ class TaskScheduler:
             for fetched_task in fetched_tasks:
                 if fetched_task.due and fetched_task.due.date == str(day_date):
                     due_datetime = datetime.fromisoformat(fetched_task.due.datetime) if fetched_task.due.datetime else datetime.combine(day_date, WORKDAY_START_TIME)
-                    gathered_tasks.append(Task(fetched_task.content, fetched_task.priority, DEFAULT_TASK_DURATION, due_datetime))
+                    due_datetime = due_datetime.replace(tzinfo=timezone.utc)  # Make due_datetime aware
+                    gathered_tasks.append(Task(fetched_task.content, fetched_task.priority, DEFAULT_TASK_DURATION, due_datetime, True))
         except Exception as error:
             print(error)
         return gathered_tasks
@@ -48,7 +50,7 @@ class TaskScheduler:
         return True
 
     def find_time_slot(self, existing_tasks, duration, day):
-        start_of_day = datetime.combine(day, WORKDAY_START_TIME)
+        start_of_day = datetime.combine(day, WORKDAY_START_TIME).replace(tzinfo=timezone.utc)
         end_of_day = start_of_day + timedelta(minutes=WORKDAY_MINUTES)
 
         current_time = start_of_day
@@ -92,12 +94,13 @@ class TaskScheduler:
             for fetched_task in fetched_tasks:
                 if fetched_task.project_id == "2315867087" and fetched_task.due and fetched_task.due.date == str(date.today()):
                     due_datetime = datetime.fromisoformat(fetched_task.due.datetime) if fetched_task.due.datetime else datetime.combine(date.today(), WORKDAY_START_TIME)
+                    due_datetime = due_datetime.replace(tzinfo=timezone.utc)  # make due_datetime offset-aware
                     self.tasks.append(Task(fetched_task.content, fetched_task.priority, DEFAULT_TASK_DURATION, due_datetime))
         except Exception as error:
             print(error)
 
-        # sort tasks by due date first (treat None as latest possible date), then by duration
-        self.tasks.sort(key=lambda t: (t.due_date if t.due_date else datetime.max, t.duration))
+        # sort tasks by due date first (treat Nsone as latest possible date), then by duration
+        self.tasks.sort(key=lambda t: (t.due_date if t.due_date else datetime.max.replace(tzinfo=timezone.utc), t.duration))
 
         current_day = date.today() + timedelta(days=1)
         for task in self.tasks:
@@ -105,7 +108,7 @@ class TaskScheduler:
             while not placed:
                 if current_day not in self.week:
                     fetched_tasks = self.fetch_tasks_on_day(current_day)
-                    self.week[current_day] = {"tasks": fetched_tasks, "time_remaining": WORKDAY_MINUTES, "end_time": datetime.combine(current_day, WORKDAY_START_TIME)}
+                    self.week[current_day] = {"tasks": fetched_tasks, "time_remaining": WORKDAY_MINUTES, "end_time": datetime.combine(current_day, WORKDAY_START_TIME).replace(tzinfo=timezone.utc)}
                     for t in fetched_tasks:
                         self.week[current_day]["time_remaining"] -= t.duration
                         self.week[current_day]["end_time"] += timedelta(minutes=t.duration)
@@ -116,6 +119,25 @@ class TaskScheduler:
                 else:
                     current_day += timedelta(days=1)
 
+        if self.week == {}:
+            return
+        for day, data in sorted(self.week.items()):
+            for task in data["tasks"]:
+                if task.organised == False: 
+                    print(type(task.due_date))
+                    try:
+                        task.organised = True
+                        new_task = API.add_task(
+                            content=task.name,
+                            due_datetime=task.due_date.isoformat(),
+                            due_lang="en",
+                            project_id="2315867356",
+                            section_id="162229528",
+                            priority=task.priority,
+                        )
+                    except Exception as error:
+                        print(error)
+
     def print_schedule(self):
         if self.week == {}:
             print("no schedules have been queued")
@@ -123,14 +145,6 @@ class TaskScheduler:
         for day, data in sorted(self.week.items()):
             for task in data["tasks"]:
                 try:
-                    # new_task = API.add_task(
-                    #     content=task.name,
-                    #     due_datetime=task.due_date,
-                    #     due_lang="en",
-                    #     project_id="2315867356",
-                    #     section_id="162229528",
-                    #     priority=task.priority,
-                    # )
                     print(f"""
 ---TASK---
 Title: {task.name}
